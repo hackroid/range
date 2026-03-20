@@ -4,7 +4,6 @@ import {
   Button, Box, Typography, Alert, CircularProgress,
 } from '@mui/material';
 import { Download, Upload, Image as ImageIcon } from '@mui/icons-material';
-import html2canvas from 'html2canvas';
 import L from 'leaflet';
 import { useStore } from '../../store/useStore';
 import { formatDistance } from '../../shared/utils/coordinates';
@@ -87,26 +86,54 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
     const width = mapEl.offsetWidth;
     const height = mapEl.offsetHeight;
 
-    // 1. Capture just the tile layer via html2canvas
-    const tilePane = mapEl.querySelector('.leaflet-tile-pane') as HTMLElement;
-    const baseCanvas = await html2canvas(tilePane || mapEl, {
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      scale,
-      backgroundColor: null,
-      width,
-      height,
-      x: 0,
-      y: 0,
-    });
-
-    // 2. Create final canvas and draw tiles
     const canvas = document.createElement('canvas');
     canvas.width = width * scale;
     canvas.height = height * scale;
     const ctx = canvas.getContext('2d')!;
-    ctx.drawImage(baseCanvas, 0, 0, canvas.width, canvas.height);
+    ctx.scale(scale, scale);
+
+    // 1. Draw map tiles manually by fetching each tile as a blob
+    const isDark = (() => {
+      const mode = settings.themeMode;
+      if (mode === 'dark') return true;
+      if (mode === 'light') return false;
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    })();
+    ctx.fillStyle = isDark ? '#1a1a2e' : '#f2efe9';
+    ctx.fillRect(0, 0, width, height);
+
+    const tileImages = mapEl.querySelectorAll<HTMLImageElement>('.leaflet-tile-pane img');
+    const fetchPromises: Promise<void>[] = [];
+
+    for (const img of tileImages) {
+      if (!img.src || !img.complete || img.naturalWidth === 0) continue;
+
+      // Get the tile's position relative to the map container
+      const tileRect = img.getBoundingClientRect();
+      const mapRect = mapEl.getBoundingClientRect();
+      const x = tileRect.left - mapRect.left;
+      const y = tileRect.top - mapRect.top;
+      const w = tileRect.width;
+      const h = tileRect.height;
+
+      // Fetch tile as blob to avoid CORS canvas tainting
+      const promise = fetch(img.src, { mode: 'cors' })
+        .then((res) => res.blob())
+        .then((blob) => createImageBitmap(blob))
+        .then((bitmap) => {
+          ctx.drawImage(bitmap, x, y, w, h);
+          bitmap.close();
+        })
+        .catch(() => {
+          // Fallback: try drawing the img directly (works on same-origin / localhost)
+          try { ctx.drawImage(img, x, y, w, h); } catch {}
+        });
+      fetchPromises.push(promise);
+    }
+    await Promise.all(fetchPromises);
+
+    // Reset scale for manual drawing at pixel level
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
 
     if (!leafletMap) return canvas;
 
