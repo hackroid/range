@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
+import type { Map as LeafletMap } from 'leaflet';
 import type { CenterPoint, AppSettings, ColorSlots } from '../types';
 
 function generateId(): string {
@@ -41,6 +42,10 @@ interface AppState {
   // Map commands
   flyToRequest: { pointId: string; ts: number } | null;
   requestFlyTo: (pointId: string) => void;
+
+  // Map instance ref (for export)
+  mapInstance: LeafletMap | null;
+  setMapInstance: (map: LeafletMap | null) => void;
 
   // Hydration
   hydrate: (data: { points?: CenterPoint[]; settings?: AppSettings; colorSlots?: ColorSlots }) => void;
@@ -173,6 +178,9 @@ export const useStore = create<AppState>()(
 
     flyToRequest: null,
     requestFlyTo: (pointId) => set({ flyToRequest: { pointId, ts: Date.now() } }),
+
+    mapInstance: null,
+    setMapInstance: (map) => set({ mapInstance: map }),
 
     hydrate: (data) => {
       set((s) => ({

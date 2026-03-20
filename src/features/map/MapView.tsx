@@ -1,10 +1,39 @@
 import { useEffect, useRef } from 'react';
-import { MapContainer, TileLayer, Circle, Tooltip, useMapEvents, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Circle, Tooltip, Marker, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useStore } from '../../store/useStore';
 import { formatDistance } from '../../shared/utils/coordinates';
 import type { CenterPoint } from '../../types';
+
+/**
+ * Compute a lat/lng point offset from a center by `radiusKm` at a given bearing (degrees).
+ * Used to position distance labels on the circle perimeter.
+ */
+function offsetPoint(lat: number, lng: number, radiusKm: number, bearingDeg: number): [number, number] {
+  const R = 6371; // earth radius km
+  const d = radiusKm / R;
+  const brng = (bearingDeg * Math.PI) / 180;
+  const lat1 = (lat * Math.PI) / 180;
+  const lng1 = (lng * Math.PI) / 180;
+
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng)
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+      Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+    );
+  return [(lat2 * 180) / Math.PI, (lng2 * 180) / Math.PI];
+}
+
+const invisibleMarkerIcon = L.divIcon({
+  className: '',
+  iconSize: [0, 0],
+  iconAnchor: [0, 0],
+});
 
 const OSM_LIGHT = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
 const OSM_DARK = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
@@ -160,6 +189,19 @@ function FlyToHandler() {
   return null;
 }
 
+/** Stores the Leaflet map instance in the store for use by export */
+function MapInstanceRegistrar() {
+  const map = useMap();
+  const setMapInstance = useStore((s) => s.setMapInstance);
+
+  useEffect(() => {
+    setMapInstance(map);
+    return () => setMapInstance(null);
+  }, [map, setMapInstance]);
+
+  return null;
+}
+
 /** Restores the saved viewport once after IndexedDB hydration */
 function ViewportRestorer() {
   const map = useMap();
@@ -208,8 +250,21 @@ function PointCircles({ point }: { point: CenterPoint }) {
   const sortedCircles = [...point.circles].sort((a, b) => b.radius - a.radius);
   const count = sortedCircles.length;
 
+  // Spread distance labels around the circle perimeter so they don't overlap.
+  // Use bearings: 90° (east) for the first, then distribute evenly.
+  const bearings = count === 1
+    ? [90]
+    : sortedCircles.map((_, i) => 45 + (i * 270) / (count - 1)); // spread from 45° to 315°
+
   return (
     <>
+      {/* Center point name label */}
+      <Marker position={[point.lat, point.lng]} icon={invisibleMarkerIcon}>
+        <Tooltip permanent direction="top" offset={[0, -8]}>
+          <span style={{ fontWeight: 600, color: point.color }}>{point.label}</span>
+        </Tooltip>
+      </Marker>
+
       {sortedCircles.map((circle, index) => {
         const opacityRange = { min: 0.08, max: 0.35 };
         const fillOpacity = count === 1
@@ -228,11 +283,19 @@ function PointCircles({ point }: { point: CenterPoint }) {
               weight: 2,
               opacity: 0.8,
             }}
-          >
-            <Tooltip permanent direction="right" offset={[10, 0]}>
+          />
+        );
+      })}
+
+      {/* Distance labels as separate markers on circle perimeters */}
+      {sortedCircles.map((circle, index) => {
+        const labelPos = offsetPoint(point.lat, point.lng, circle.radius, bearings[index]);
+        return (
+          <Marker key={`label-${circle.id}`} position={labelPos} icon={invisibleMarkerIcon}>
+            <Tooltip permanent direction="right" offset={[0, 0]}>
               {formatDistance(circle.radius, unit)}
             </Tooltip>
-          </Circle>
+          </Marker>
         );
       })}
     </>
@@ -268,6 +331,7 @@ export default function MapView() {
     >
       <TileLayer url={getTileUrl()} attribution={attribution} />
       <MapClickHandler />
+      <MapInstanceRegistrar />
       <ViewportTracker />
       <ViewportRestorer />
       <FlyToHandler />
