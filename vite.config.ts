@@ -9,12 +9,16 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
+        id: '/',
+        start_url: '/',
+        scope: '/',
         name: 'Range - Distance Visualizer',
         short_name: 'Range',
         description: 'Visualize distance ranges as concentric circles on an interactive map',
         theme_color: '#1976d2',
         background_color: '#ffffff',
         display: 'standalone',
+        orientation: 'any',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -25,7 +29,12 @@ export default defineConfig({
             src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable',
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
           },
         ],
       },
