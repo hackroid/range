@@ -57,7 +57,7 @@ function AppContent() {
   const sidebarContent = <Sidebar />;
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden' }}>
       <AppBar position="static" elevation={1} color="default" sx={{ zIndex: (t) => t.zIndex.drawer + 1 }}>
         <Toolbar variant="dense" sx={{ gap: 1 }}>
           {isMobile && (

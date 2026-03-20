@@ -119,10 +119,9 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
       // Fetch tile as blob to avoid CORS canvas tainting
       const promise = fetch(img.src, { mode: 'cors' })
         .then((res) => res.blob())
-        .then((blob) => createImageBitmap(blob))
-        .then((bitmap) => {
-          ctx.drawImage(bitmap, x, y, w, h);
-          bitmap.close();
+        .then((blob) => blobToImage(blob))
+        .then((bmpImg) => {
+          ctx.drawImage(bmpImg, x, y, w, h);
         })
         .catch(() => {
           // Fallback: try drawing the img directly (works on same-origin / localhost)
@@ -200,6 +199,17 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
 
     return canvas;
   };
+
+  /** Convert a Blob to an HTMLImageElement — works on all browsers including older iOS Safari */
+  function blobToImage(blob: Blob): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load tile')); };
+      img.src = url;
+    });
+  }
 
   function hexToRgba(hex: string, alpha: number): string {
     const r = parseInt(hex.slice(1, 3), 16) || 0;
