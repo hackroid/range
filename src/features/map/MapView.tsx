@@ -151,9 +151,10 @@ function MapClickHandler() {
 
       popupRef.current = popup;
 
-      // Attach click handler to the button after popup opens
+      // Attach click handler scoped to THIS popup's DOM (not global document)
       setTimeout(() => {
-        const btn = document.getElementById('range-make-point-btn');
+        const popupEl = popup.getElement();
+        const btn = popupEl?.querySelector('#range-make-point-btn') as HTMLElement | null;
         if (btn) {
           btn.addEventListener('click', () => {
             addPoint(lat, lng);
