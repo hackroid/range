@@ -42,13 +42,14 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         runtimeCaching: [
           {
-            // Cache OSM tiles
+            // Cache OSM tiles — CORS-only to avoid 7 MB opaque response padding
             urlPattern: /^https:\/\/[abc]\.tile\.openstreetmap\.org\//,
             handler: 'CacheFirst',
             options: {
               cacheName: 'osm-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheableResponse: { statuses: [200] },
+              fetchOptions: { mode: 'cors' },
             },
           },
           {
@@ -57,8 +58,9 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'carto-tiles',
-              expiration: { maxEntries: 500, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 200, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheableResponse: { statuses: [200] },
+              fetchOptions: { mode: 'cors' },
             },
           },
           {
@@ -67,8 +69,9 @@ export default defineConfig({
             handler: 'CacheFirst',
             options: {
               cacheName: 'satellite-tiles',
-              expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheableResponse: { statuses: [200] },
+              fetchOptions: { mode: 'cors' },
             },
           },
           {
@@ -77,8 +80,9 @@ export default defineConfig({
             handler: 'NetworkFirst',
             options: {
               cacheName: 'geocoding',
-              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 * 7 },
-              cacheableResponse: { statuses: [0, 200] },
+              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 7 },
+              cacheableResponse: { statuses: [200] },
+              fetchOptions: { mode: 'cors' },
             },
           },
         ],
