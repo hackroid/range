@@ -4,7 +4,7 @@
 
 **Range** is a frontend-only Progressive Web App (PWA) that visualizes distance ranges as concentric circles around user-defined center points on an interactive map. Users can compare distances from multiple locations at a glance.
 
-**Tech Stack:** React + TypeScript, Material UI (MUI v6), Leaflet (via react-leaflet) + Google Maps option, Vite.
+**Tech Stack:** React + TypeScript, Material UI (MUI v7), Leaflet (via react-leaflet) + Google Maps option, Vite.
 
 ---
 
@@ -155,7 +155,7 @@
 ### 9.2 Key Libraries (Preliminary)
 | Purpose | Library |
 |---|---|
-| UI Framework | MUI v6 (`@mui/material`) |
+| UI Framework | MUI v7 (`@mui/material`) |
 | Map (OSM) | `react-leaflet` + `leaflet` |
 | Map (Google) | `@vis.gl/react-google-maps` or `@react-google-maps/api` |
 | Color Picker | `react-colorful` or `@uiw/react-color` |
