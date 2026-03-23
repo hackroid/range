@@ -76,11 +76,65 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  /** Wait for all visible Leaflet tiles to finish loading */
+  function waitForTilesLoaded(mapEl: HTMLElement): Promise<void> {
+    return new Promise((resolve) => {
+      const check = () => {
+        const tiles = mapEl.querySelectorAll<HTMLImageElement>('.leaflet-tile-pane img');
+        for (const img of tiles) {
+          // Skip hidden tiles (old zoom levels being faded out)
+          if (!isTileVisible(img)) continue;
+          // If any visible tile is still loading, wait
+          if (img.src && (!img.complete || img.naturalWidth === 0)) return false;
+        }
+        return true;
+      };
+
+      if (check()) { resolve(); return; }
+
+      // Poll until tiles are loaded, with timeout
+      let elapsed = 0;
+      const interval = setInterval(() => {
+        elapsed += 100;
+        if (check() || elapsed >= 8000) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 100);
+    });
+  }
+
+  /** Check if a tile img is actually visible (not from a stale zoom level being faded out) */
+  function isTileVisible(img: HTMLImageElement): boolean {
+    if (!img.src) return false;
+    const style = window.getComputedStyle(img);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (parseFloat(style.opacity) < 0.01) return false;
+
+    // Check parent tile container — Leaflet hides old zoom level containers
+    let el: HTMLElement | null = img.parentElement;
+    while (el && !el.classList.contains('leaflet-tile-pane')) {
+      const ps = window.getComputedStyle(el);
+      if (ps.display === 'none' || ps.visibility === 'hidden') return false;
+      if (parseFloat(ps.opacity) < 0.01) return false;
+      el = el.parentElement;
+    }
+    return true;
+  }
+
   const captureMap = async (): Promise<HTMLCanvasElement> => {
     const mapEl = document.querySelector('.leaflet-container') as HTMLElement;
     if (!mapEl) throw new Error('Map not found');
 
     const leafletMap = useStore.getState().mapInstance;
+    if (!leafletMap) throw new Error('Map instance not ready');
+
+    // Read fresh state from store — NOT from the React closure which may be stale
+    const currentPoints = useStore.getState().points;
+    const currentSettings = useStore.getState().settings;
+
+    // Wait for all visible tiles to finish loading before capturing
+    await waitForTilesLoaded(mapEl);
 
     const scale = 2;
     const width = mapEl.offsetWidth;
@@ -92,9 +146,9 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
     const ctx = canvas.getContext('2d')!;
     ctx.scale(scale, scale);
 
-    // 1. Draw map tiles manually by fetching each tile as a blob
+    // 1. Draw background
     const isDark = (() => {
-      const mode = settings.themeMode;
+      const mode = currentSettings.themeMode;
       if (mode === 'dark') return true;
       if (mode === 'light') return false;
       return window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -102,50 +156,74 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
     ctx.fillStyle = isDark ? '#1a1a2e' : '#f2efe9';
     ctx.fillRect(0, 0, width, height);
 
+    // 2. Collect only visible, loaded tiles (skip stale zoom-level tiles)
     const tileImages = mapEl.querySelectorAll<HTMLImageElement>('.leaflet-tile-pane img');
-    const fetchPromises: Promise<void>[] = [];
+    const mapRect = mapEl.getBoundingClientRect();
+
+    interface TileEntry {
+      img: HTMLImageElement;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+      fetchedImg: HTMLImageElement | null;
+    }
+    const tiles: TileEntry[] = [];
 
     for (const img of tileImages) {
-      if (!img.src || !img.complete || img.naturalWidth === 0) continue;
+      if (!img.complete || img.naturalWidth === 0) continue;
+      if (!isTileVisible(img)) continue;
 
-      // Get the tile's position relative to the map container
       const tileRect = img.getBoundingClientRect();
-      const mapRect = mapEl.getBoundingClientRect();
-      const x = tileRect.left - mapRect.left;
-      const y = tileRect.top - mapRect.top;
-      const w = tileRect.width;
-      const h = tileRect.height;
-
-      // Fetch tile as blob to avoid CORS canvas tainting
-      const promise = fetch(img.src, { mode: 'cors' })
-        .then((res) => res.blob())
-        .then((blob) => blobToImage(blob))
-        .then((bmpImg) => {
-          ctx.drawImage(bmpImg, x, y, w, h);
-        })
-        .catch(() => {
-          // Fallback: try drawing the img directly (works on same-origin / localhost)
-          try { ctx.drawImage(img, x, y, w, h); } catch {}
-        });
-      fetchPromises.push(promise);
+      tiles.push({
+        img,
+        x: tileRect.left - mapRect.left,
+        y: tileRect.top - mapRect.top,
+        w: tileRect.width,
+        h: tileRect.height,
+        fetchedImg: null,
+      });
     }
-    await Promise.all(fetchPromises);
 
-    // Reset scale for manual drawing at pixel level
+    // Fetch all tiles in parallel (for speed) but store results to draw in DOM order
+    await Promise.all(
+      tiles.map(async (tile) => {
+        try {
+          const res = await fetch(tile.img.src, { mode: 'cors' });
+          const blob = await res.blob();
+          tile.fetchedImg = await blobToImage(blob);
+        } catch {
+          // fetchedImg stays null — will try direct draw as fallback
+        }
+      })
+    );
+
+    // Draw tiles in DOM order to preserve correct z-layering
+    for (const tile of tiles) {
+      try {
+        if (tile.fetchedImg) {
+          ctx.drawImage(tile.fetchedImg, tile.x, tile.y, tile.w, tile.h);
+        } else {
+          ctx.drawImage(tile.img, tile.x, tile.y, tile.w, tile.h);
+        }
+      } catch {
+        // Skip tiles that can't be drawn (CORS tainted, etc.)
+      }
+    }
+
+    // Reset scale for manual pixel-level drawing
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    if (!leafletMap) return canvas;
-
-    // 3. Draw circles manually using map projection
-    const visiblePoints = points.filter((p) => p.visible);
+    // 3. Draw circles using Leaflet map projection
+    const visiblePoints = currentPoints.filter((p) => p.visible);
     for (const point of visiblePoints) {
       const centerPx = leafletMap.latLngToContainerPoint([point.lat, point.lng]);
       const sortedCircles = [...point.circles].sort((a, b) => b.radius - a.radius);
       const count = sortedCircles.length;
+      if (count === 0) continue;
 
       for (let i = 0; i < sortedCircles.length; i++) {
         const circle = sortedCircles[i];
-        // Compute pixel radius: project a point on the circle edge
         const edgeLatLng = L.latLng(point.lat, point.lng).toBounds(circle.radius * 1000 * 2);
         const ne = leafletMap.latLngToContainerPoint(edgeLatLng.getNorthEast());
         const sw = leafletMap.latLngToContainerPoint(edgeLatLng.getSouthWest());
@@ -169,12 +247,12 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
         ctx.lineWidth = 2 * scale;
         ctx.stroke();
 
-        // Distance label on the perimeter (right side, spread by bearing)
+        // Distance label on the perimeter
         const bearing = count === 1 ? 0 : -45 + (i * 90) / Math.max(count - 1, 1);
         const rad = (bearing * Math.PI) / 180;
         const lx = centerPx.x * scale + Math.sin(rad) * radiusPx * scale;
         const ly = centerPx.y * scale - Math.cos(rad) * radiusPx * scale;
-        const label = formatDistance(circle.radius, settings.unit);
+        const label = formatDistance(circle.radius, currentSettings.unit);
 
         ctx.font = `${12 * scale}px sans-serif`;
         const metrics = ctx.measureText(label);
@@ -230,6 +308,10 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
         return;
       }
 
+      // Read fresh state for the legend — NOT from closure
+      const currentPoints = useStore.getState().points;
+      const currentSettings = useStore.getState().settings;
+
       // Build a final canvas with map + legend side by side
       const legendWidth = 260;
       const padding = 24;
@@ -237,7 +319,7 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
 
       // Calculate legend height
       let legendContentHeight = padding + 30; // top padding + title
-      for (const p of points) {
+      for (const p of currentPoints) {
         legendContentHeight += 28; // point name row
         legendContentHeight += lineHeight; // coordinates
         legendContentHeight += p.circles.length * lineHeight; // circles
@@ -271,7 +353,7 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
       ctx.fillText('Range Map', lx + padding * s, y + 16 * s);
       y += 36 * s;
 
-      for (const p of points) {
+      for (const p of currentPoints) {
         // Color dot + label
         ctx.fillStyle = p.color;
         ctx.beginPath();
@@ -293,7 +375,7 @@ export default function ExportImportDialog({ open, onClose }: ExportImportDialog
         for (const c of p.circles) {
           ctx.fillStyle = '#555555';
           ctx.font = `${11 * s}px sans-serif`;
-          const unit = settings.unit;
+          const unit = currentSettings.unit;
           const val = unit === 'miles' ? (c.radius * 0.621371).toFixed(1) : c.radius.toFixed(1);
           ctx.fillText(`  • ${val} ${unit}`, lx + padding * s + 4 * s, y + 4 * s);
           y += 16 * s;
